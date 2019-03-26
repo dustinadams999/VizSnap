@@ -1,0 +1,80 @@
+10
+
+dir
+8637
+svn+ssh://dadams@at-server.trl.ibm.com/svnroot_social/harada/MobilePhoto/RestKit/Code
+svn+ssh://dadams@at-server.trl.ibm.com/svnroot_social
+
+
+
+2012-07-12T12:21:44.038702Z
+8602
+harada
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+f6093aec-b40b-0410-b68d-ec6f034457bd
+
+CoreData
+dir
+
+ObjectMapping
+dir
+
+Network
+dir
+
+RestKit.h
+file
+
+
+
+
+2012-07-27T05:25:15.000000Z
+c9883bcac8b6b7538fadf9167362db0b
+2012-07-12T12:21:44.038702Z
+8602
+harada
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1074
+
+Support
+dir
+
+Testing
+dir
+
+UI
+dir
+

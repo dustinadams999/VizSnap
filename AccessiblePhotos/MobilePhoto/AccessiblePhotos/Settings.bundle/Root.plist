@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PreferenceSpecifiers</key>
+	<array>
+		<dict>
+			<key>Title</key>
+			<string>User Interface</string>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>Title</key>
+			<string>Interface type</string>
+			<key>Key</key>
+			<string>interfaceType</string>
+			<key>DefaultValue</key>
+			<string>buttons</string>
+			<key>Titles</key>
+			<array>
+				<string>Buttons</string>
+				<string>Gestures</string>
+				<string>Unified</string>
+			</array>
+			<key>Values</key>
+			<array>
+				<string>buttons</string>
+				<string>gestures</string>
+				<string>unified</string>
+			</array>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSToggleSwitchSpecifier</string>
+			<key>Title</key>
+			<string>Use without logging in</string>
+			<key>Key</key>
+			<string>useWithoutLoggingIn</string>
+			<key>DefaultValue</key>
+			<true/>
+		</dict>
+	</array>
+	<key>StringsTable</key>
+	<string>Root</string>
+</dict>
+</plist>

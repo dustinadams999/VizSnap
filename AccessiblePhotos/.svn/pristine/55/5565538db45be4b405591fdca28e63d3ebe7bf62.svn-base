@@ -1,0 +1,308 @@
+//
+//  AudioSessionManager.m
+//  AccessiblePhotos
+//
+//  Created by 原田 丞 on 12/08/15.
+//  Copyright (c) 2012年 IBM Research - Tokyo. All rights reserved.
+//
+
+#import "AudioSessionManager.h"
+#import <AVFoundation/AVFoundation.h>
+#import <AudioToolbox/AudioToolbox.h>
+
+@implementation AudioSessionManager
+
+@synthesize currentMode = _currentMode;
+@synthesize enableRecordingViaBluetooth = _enableRecordingViaBluetooth;
+
++ (AudioSessionManager *)sharedManager
+{
+    static dispatch_once_t pred;
+    static AudioSessionManager *sharedInstance = nil;
+    dispatch_once(&pred, ^{ sharedInstance = [self new]; });
+    return sharedInstance;
+}
+
+- (id)init
+{
+    if (self = [super init])
+    {
+        // Register interruption callback.
+        OSStatus status = AudioSessionInitialize(NULL, NULL, audioInterruptionListenerCallback, NULL);
+        
+        if (status != noErr)
+        {
+            NSLog(@"ERROR: Unable to initialize audio session: Status code %d", (int)status);
+        }
+        
+        // Register route change callback.
+        AudioSessionAddPropertyListener(kAudioSessionProperty_AudioRouteChange, audioRouteChangeListenerCallback, (__bridge void*) self);
+
+        [self switchToNoAudioMode];
+    }
+    return self;
+}
+
+#pragma mark - Property accessor methods
+
+- (void)setCurrentMode:(AudioSessionMode)currentMode
+{
+    if (_currentMode != currentMode)
+    {
+        _currentMode = currentMode;
+        switch (_currentMode) {
+            case kAudioSessionModeNoAudio:
+                [self switchToNoAudioMode];
+                break;
+            case kAudioSessionModeRecording:
+                [self switchToRecordingMode];
+                break;
+            case kAudioSessionModePlayback:
+                [self switchToPlaybackMode];
+                break;
+        }
+    }
+}
+
+- (void)setEnableRecordingViaBluetooth:(BOOL)enableRecordingViaBluetooth
+{
+    if (_enableRecordingViaBluetooth != enableRecordingViaBluetooth)
+    {
+        _enableRecordingViaBluetooth = enableRecordingViaBluetooth;
+        // FIX: make this configured from Settings
+        // Enable Bluetooth mic recording
+        UInt32 allowBlueToothInput = _enableRecordingViaBluetooth;
+        AudioSessionSetProperty(kAudioSessionProperty_OverrideCategoryEnableBluetoothInput, sizeof(allowBlueToothInput), &allowBlueToothInput);
+    }
+}
+
+#pragma mark - Private instance methods
+
+- (NSString *)currentModeName
+{
+    switch (self.currentMode) {
+        case kAudioSessionModeNoAudio:
+            return @"No audio";
+        case kAudioSessionModeRecording:
+            return @"Recording";
+        case kAudioSessionModePlayback:
+            return @"Playback";
+    }
+    return @"unknown";
+}
+
+- (BOOL)switchToNoAudioMode
+{
+    NSError *error = nil;
+    
+    error = nil;
+    [[AVAudioSession sharedInstance] setActive:NO error:&error];
+    if (error)
+    {
+        NSLog(@"ERROR: AudioSessionManager: Unable to set inactive: %@", error.localizedDescription);
+    }
+
+    // FIX: delete?
+//    error = nil;
+//    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryAmbient error:&error];
+//    if (error)
+//    {
+//        NSLog(@"ERROR: AudioSessionManager; unable to set audio session category to Ambient: %@", error.localizedDescription);
+//    }
+
+    _currentMode = kAudioSessionModeNoAudio;
+    return YES;
+}
+
+- (BOOL)switchToRecordingMode
+{
+    NSError *error = nil;
+
+    // First deactivate the audio session to make changes.
+    error = nil;
+    [[AVAudioSession sharedInstance] setActive:NO error:&error];
+    if (error)
+    {
+        NSLog(@"ERROR: AudioSessionManager: Unable to set inactive: %@", error.localizedDescription);
+    }
+    
+    // Set the audio session category to play and record
+    error = nil;
+    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord error:&error];
+    if (error)
+    {
+        NSLog(@"ERROR: AudioSessionManager: Unable to set audio session category: %@", error.localizedDescription);
+    }
+    
+    // See if we need to override the audio output route to be the speaker
+    BOOL shouldOverride = [self isRoutingToOutput:kAudioSessionOutputRoute_BuiltInReceiver];
+    
+    if (shouldOverride)
+    {
+        NSLog(@"############# overriding output to route to speaker");
+        // FIX: make this configured from Settings
+        // Override the routing so that audio output uses the speaker
+        UInt32 audioRouteOverride = kAudioSessionOverrideAudioRoute_Speaker;
+        AudioSessionSetProperty(kAudioSessionProperty_OverrideAudioRoute, sizeof(audioRouteOverride), &audioRouteOverride);
+    }
+    
+    // Reactivate the audio session.
+    error = nil;
+    [[AVAudioSession sharedInstance] setActive:YES error:&error];
+    if (error)
+    {
+        NSLog(@"ERROR: AudioSessionManager: Unable to set active: %@", error.localizedDescription);
+    }
+    
+    _currentMode = kAudioSessionModeRecording;
+    return YES;
+}
+
+- (BOOL)switchToPlaybackMode
+{
+    NSError *error = nil;
+
+    // First deactivate the audio session to make changes.
+    error = nil;
+    [[AVAudioSession sharedInstance] setActive:NO error:&error];
+    if (error)
+    {
+        NSLog(@"ERROR: AudioSessionManager: Unable to set inactive: %@", error.localizedDescription);
+    }
+
+    // Set the audio session category to playback.
+    error = nil;
+    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:&error];
+    if (error)
+    {
+        NSLog(@"ERROR: AudioSessionManager: Unable to set audio session category: %@", error.localizedDescription);
+    }
+
+    // Reactivate the audio session.
+    error = nil;
+    [[AVAudioSession sharedInstance] setActive:YES error:&error];
+    if (error)
+    {
+        NSLog(@"ERROR: AudioSessionManager: Unable to set active: %@", error.localizedDescription);
+    }
+    
+    _currentMode = kAudioSessionModePlayback;
+    return YES;
+}
+
+#pragma mark - Audio Session callbacks
+
+void audioInterruptionListenerCallback(void *inUserData, UInt32 interruptionState)
+{
+    if (interruptionState == kAudioSessionBeginInterruption)
+    {
+        NSLog(@"##### AudioSessionManager: audioInterruptionListenerCallback called: interruption began");
+    }
+    else if (interruptionState == kAudioSessionEndInterruption)
+    {
+        NSLog(@"##### AudioSessionManager: audioInterruptionListenerCallback called: interruption ended");
+    }
+}
+
+void audioRouteChangeListenerCallback(void *inUserData, AudioSessionPropertyID inPropertyID, UInt32 inPropertyValueSize, const void *inPropertyValue)
+{
+    if (inPropertyID != kAudioSessionProperty_AudioRouteChange) return;
+
+    AudioSessionManager *manager = (__bridge AudioSessionManager *)inUserData;
+    
+    NSLog(@"##### AudioSessionManager: audioRouteChangeListenerCallback called. Current mode: %@", [manager currentModeName]);
+
+    CFDictionaryRef routeChangeDictionary = inPropertyValue;
+    CFNumberRef routeChangeReasonRef = CFDictionaryGetValue (
+                          routeChangeDictionary,
+                          CFSTR (kAudioSession_AudioRouteChangeKey_Reason));
+    SInt32 routeChangeReason;
+    CFNumberGetValue(routeChangeReasonRef, kCFNumberSInt32Type, &routeChangeReason);
+    
+    switch (routeChangeReason) {
+        case kAudioSessionRouteChangeReason_Unknown:
+            NSLog(@"########### route change reason: unknown");
+            break;
+        case kAudioSessionRouteChangeReason_NewDeviceAvailable:
+            NSLog(@"########### route change reason: new device available");
+            break;
+        case kAudioSessionRouteChangeReason_OldDeviceUnavailable:
+            NSLog(@"########### route change reason: old device unavailable");
+            break;
+        case kAudioSessionRouteChangeReason_CategoryChange:
+            NSLog(@"########### route change reason: category change");
+            break;
+        case kAudioSessionRouteChangeReason_Override:
+            NSLog(@"########### route change reason: override");
+            break;
+        case kAudioSessionRouteChangeReason_WakeFromSleep:
+            NSLog(@"########### route change reason: wake from sleep");
+            break;
+        case kAudioSessionRouteChangeReason_NoSuitableRouteForCategory:
+            NSLog(@"########### route change reason: no suitable route for category");
+            break;
+    }
+
+    CFDictionaryRef currentRoutesRef = CFDictionaryGetValue(routeChangeDictionary,kAudioSession_AudioRouteChangeKey_CurrentRouteDescription);
+
+
+    CFArrayRef audioOutputs = CFDictionaryGetValue(currentRoutesRef, kAudioSession_AudioRouteKey_Outputs);
+    
+    NSLog(@"########### Current outputs:");
+    for (CFIndex i = 0, c = CFArrayGetCount(audioOutputs); i < c; i++)
+    {
+        CFDictionaryRef item = CFArrayGetValueAtIndex(audioOutputs, i);
+        CFStringRef device = CFDictionaryGetValue(item, kAudioSession_AudioRouteKey_Type);
+        
+        NSLog(@"###########   Output device: %@", (__bridge NSString *)device);
+    }
+    
+    CFArrayRef audioInputs = CFDictionaryGetValue(currentRoutesRef, kAudioSession_AudioRouteKey_Inputs);
+    
+    NSLog(@"########### Current inputs:");
+    for (CFIndex i = 0, c = CFArrayGetCount(audioInputs); i < c; i++)
+    {
+        CFDictionaryRef item = CFArrayGetValueAtIndex(audioInputs, i);
+        CFStringRef device = CFDictionaryGetValue(item, kAudioSession_AudioRouteKey_Type);
+        
+        NSLog(@"###########   Input device: %@", (__bridge NSString *)device);
+    }
+    
+    
+    
+    
+    
+    if (routeChangeReason == kAudioSessionRouteChangeReason_OldDeviceUnavailable &&
+        manager.currentMode == kAudioSessionModeRecording)
+    {
+        // Cause the output to be overridden.
+        [manager switchToRecordingMode];
+    }
+}
+
+- (BOOL)isRoutingToOutput:(const CFStringRef)outputRoute
+{
+    CFDictionaryRef audioRoute;
+    UInt32 audioRouteSize = sizeof(audioRoute);
+    OSStatus status = AudioSessionGetProperty(kAudioSessionProperty_AudioRouteDescription, &audioRouteSize, &audioRoute);
+    if (status != noErr)
+    {
+        NSLog(@"ERROR: Unable to get audio route description property: Status code %d", (int)status);
+        return NO;
+    }
+
+    CFArrayRef audioOutputs = CFDictionaryGetValue(audioRoute, kAudioSession_AudioRouteKey_Outputs);
+    for (CFIndex i = 0, c = CFArrayGetCount(audioOutputs); i < c; i++)
+    {
+        CFDictionaryRef audioOutput = CFArrayGetValueAtIndex(audioOutputs, i);
+        CFStringRef audioOutputName = CFDictionaryGetValue(audioOutput, kAudioSession_AudioRouteKey_Type);
+        
+        if (CFStringCompare(audioOutputName, outputRoute, kCFCompareCaseInsensitive) == kCFCompareEqualTo)
+        {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+@end

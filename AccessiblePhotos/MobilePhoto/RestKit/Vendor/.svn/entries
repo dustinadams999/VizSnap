@@ -1,0 +1,86 @@
+10
+
+dir
+8637
+svn+ssh://dadams@at-server.trl.ibm.com/svnroot_social/harada/MobilePhoto/RestKit/Vendor
+svn+ssh://dadams@at-server.trl.ibm.com/svnroot_social
+
+
+
+2012-07-12T12:21:44.038702Z
+8602
+harada
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+f6093aec-b40b-0410-b68d-ec6f034457bd
+
+LibComponentLogging
+dir
+
+JSONKit
+dir
+
+cocoa-oauth
+dir
+
+XMLReader
+dir
+
+PortableStaticLibrary.xcconfig
+file
+
+
+
+
+2012-07-27T05:25:15.000000Z
+2f964330ff91f9be3d2173fb838989a8
+2012-07-12T12:21:44.038702Z
+8602
+harada
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+303
+
+iso8601parser
+dir
+
+appledoc
+dir
+
+FileMD5Hash
+dir
+
+SOCKit
+dir
+

@@ -1,0 +1,882 @@
+//
+//  ContextCaptureHelper.m
+//  AccessiblePhotos
+//
+//  Created by 原田 丞 on 12/08/07.
+//  Copyright (c) 2012年 IBM Research - Tokyo. All rights reserved.
+//
+
+#import "ContextCaptureHelper.h"
+#import <AVFoundation/AVFoundation.h>
+#import "FileUtils.h"
+
+@interface ContextCaptureHelper () <AVAudioRecorderDelegate>
+
+@end
+
+@implementation ContextCaptureHelper
+{
+    AVAudioRecorder *ambientAudioRecorder;
+    AVAudioRecorder *memoAudioRecorder;
+    CameraFrameCaptureHelper *cameraFrameCaptureHelper;
+    
+//    NSString *temporarilyCapturedAmbientAudioFilePath;
+//    NSString *temporarilyCapturedMemoAudioFilePath;
+//    UIImage *temporarilyCapturedImage;
+    
+    CaptureCompletionCallback ambientAudioRecordingCompletionCallback;
+    CaptureCompletionCallback memoAudioRecordingCompletionCallback;
+//    CaptureCompletionCallback videoRecordingCompletionCallback;
+    NSString *jsonKeyWords;
+}
+
+NSString *const kTempAmbientAudioFilename = @"tempAmbientAudioRecording.caf";
+NSString *const kTempMemoAudioFilename = @"tempMemoAudioRecording.caf";
+
+//@synthesize delegate;
+@synthesize isCapturingAmbientAudio = _isCapturingAmbientAudio;
+@synthesize isCapturingMemoAudio = _isCapturingMemoAudio;
+@synthesize isCapturingPhoto = _isCapturingPhoto;
+//@synthesize isCapturingVideo = _isCapturingVideo;
+
+@synthesize isCapturePaused = _isCapturePaused;
+
+@synthesize temporarilyCapturedAmbientAudioFilePath;
+@synthesize temporarilyCapturedMemoAudioFilePath;
+@synthesize temporarilyCapturedImage;
+
+- (id)init
+{
+    if (self = [super init])
+    {
+        cameraFrameCaptureHelper = [CameraFrameCaptureHelper new];
+    }
+    return self;
+}
+
+#pragma mark - Property accessor methods
+
+- (BOOL)isCapturingPhodio
+{
+    return (self.isCapturingPhoto && self.isCapturingAmbientAudio);
+}
+
+- (CameraFrameCaptureHelper *)cameraFrameCaptureHelper
+{
+    return cameraFrameCaptureHelper;
+}
+
+#pragma mark - Public instance methods
+
+- (BOOL)startAmbientAudioCapture
+{
+    // TODO: if video is being captured, stop it first.
+    
+    if (self.isCapturingAmbientAudio == NO)
+    {
+        ambientAudioRecordingCompletionCallback = nil;
+        temporarilyCapturedAmbientAudioFilePath = nil;
+
+        //NSString *tempFilePath = [FileUtils pathToTempDataFile:[FileUtils timestampedFilenameWithSuffix:nil extension:@"caf"]];
+        NSString *tempFilePath = [FileUtils pathToTempDataFile:[FileUtils timestampedFilenameWithSuffix:nil extension:@"wav"]];
+        
+        NSDictionary *audioRecorderSettings = [NSDictionary
+                                               dictionaryWithObjectsAndKeys:
+                                               [NSNumber numberWithInt:AVAudioQualityMedium],
+                                               AVEncoderAudioQualityKey,
+                                               [NSNumber numberWithInt:16], 
+                                               AVEncoderBitRateKey,
+                                               [NSNumber numberWithInt: 2], 
+                                               AVNumberOfChannelsKey,
+                                               [NSNumber numberWithFloat:44100.0], 
+                                               AVSampleRateKey,
+                                               nil];
+
+        NSError *error = nil;
+        ambientAudioRecorder = [[AVAudioRecorder alloc] initWithURL:[NSURL fileURLWithPath:tempFilePath] settings:audioRecorderSettings error:&error];
+        if (error)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: could not initialize ambient audio recorder: %@", error.localizedDescription);
+            ambientAudioRecorder = nil;
+            return NO;
+        }
+        
+        ambientAudioRecorder.delegate = self;
+
+        NSLog(@"############### preparing ambientAudioRecorder");
+        if ([ambientAudioRecorder prepareToRecord] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: could not prepare ambient audio recorder");
+            ambientAudioRecorder.delegate = nil;
+            ambientAudioRecorder = nil;
+            
+            return NO;
+        }
+        NSLog(@"###############   prepared ambientAudioRecorder");
+        
+        NSLog(@"############### starting record on ambientAudioRecorder");
+        if ([ambientAudioRecorder record] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: could not start ambient audio recorder");
+            ambientAudioRecorder.delegate = nil;
+            ambientAudioRecorder = nil;
+            
+            return NO;
+        }
+        NSLog(@"###############   started record on ambientAudioRecorder");
+
+        _isCapturingAmbientAudio = YES;
+        
+        return YES;
+    }
+    
+    NSLog(@"ContextCaptureHelper: attempt to start ambient audio capture when already started.");
+    
+    return NO;
+}
+
+- (void)stopAmbientAudioCaptureWithCompletion:(CaptureCompletionCallback)completionCallback
+{
+    if (self.isCapturingAmbientAudio == YES)
+    {
+        // Keep a copy of the completion callback since the
+        // method from which we'll be calling the callback will be invoked
+        // asynchronously after this method goes out of scope.
+        if (completionCallback != nil)
+        {
+            ambientAudioRecordingCompletionCallback = [completionCallback copy];
+        }
+        
+        // Asynchronously stop the ambient audio recorder.
+        // When the recording completes and the file finishes writing,
+        // the corresponding delegate method will be called.
+        [ambientAudioRecorder stop];
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to stop ambient audio capture when already stopped.");
+        // Directly call the callback
+        if (completionCallback != nil)
+        {
+            completionCallback(self, NO);
+        }
+    }
+}
+
+- (BOOL)startMemoAudioCapture
+{
+    // TODO: if video is being captured, stop it first.
+    
+    if (self.isCapturingMemoAudio == NO)
+    {
+        memoAudioRecordingCompletionCallback = nil;
+        temporarilyCapturedMemoAudioFilePath = nil;
+        
+        //NSString *tempFilePath = [FileUtils pathToTempDataFile:[FileUtils timestampedFilenameWithSuffix:@"_memo" extension:@"caf"]];
+        NSString *tempFilePath = [FileUtils pathToTempDataFile:[FileUtils timestampedFilenameWithSuffix:@"_memo" extension:@"wav"]];
+        
+        NSDictionary *audioRecorderSettings = [NSDictionary
+                                               dictionaryWithObjectsAndKeys:
+                                               [NSNumber numberWithInt:AVAudioQualityMedium],
+                                               AVEncoderAudioQualityKey,
+                                               [NSNumber numberWithInt:16], 
+                                               AVEncoderBitRateKey,
+                                               [NSNumber numberWithInt: 2], 
+                                               AVNumberOfChannelsKey,
+                                               [NSNumber numberWithFloat:44100.0], 
+                                               AVSampleRateKey,
+                                               nil];
+        
+        NSError *error = nil;
+        memoAudioRecorder = [[AVAudioRecorder alloc] initWithURL:[NSURL fileURLWithPath:tempFilePath] settings:audioRecorderSettings error:&error];
+        if (error)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: could not initialize memo audio recorder: %@", error.localizedDescription);
+            memoAudioRecorder = nil;
+            return NO;
+        }
+        
+        memoAudioRecorder.delegate = self;
+        
+        if ([memoAudioRecorder prepareToRecord] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: could not prepare memo audio recorder");
+            memoAudioRecorder.delegate = nil;
+            memoAudioRecorder = nil;
+            
+            return NO;
+        }
+
+        if ([memoAudioRecorder record] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: could not start memo audio recorder");
+            memoAudioRecorder.delegate = nil;
+            memoAudioRecorder = nil;
+            
+            return NO;
+        }
+        
+        _isCapturingMemoAudio = YES;
+        
+        return YES;
+    }
+    
+    NSLog(@"ContextCaptureHelper: attempt to start memo audio capture when already started.");
+    
+    return NO;
+}
+
+- (void)stopMemoAudioCaptureWithCompletion:(CaptureCompletionCallback)completionCallback
+{
+    if (self.isCapturingMemoAudio == YES)
+    {
+        // Keep a copy of the completion callback since the
+        // method from which we'll be calling the callback will be invoked
+        // asynchronously after this method goes out of scope.
+        if (completionCallback != nil)
+        {
+            memoAudioRecordingCompletionCallback = [completionCallback copy];
+        }
+        
+        // Asynchronously stop the memo audio recorder.
+        // When the recording completes and the file finishes writing,
+        // the corresponding delegate method will be called.
+        [memoAudioRecorder stop];
+        
+        AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+        [audioSession setActive:NO error:nil];
+        
+        //below is what sends the audio file to be parsed into json text
+        /*
+        NSData *data = [[NSData alloc] initWithContentsOfURL:memoAudioRecorder.url];
+        
+        NSString *jsonData = [self uploadFile:data withPath:[NSURL URLWithString:@"http://users.soe.ucsc.edu/~dustinadams/speech/uploadAudio.php"] withFileName:@"AudioMemo.wav"];
+        
+        //WE NEED TO MAKE SURE OUR PHP FILES CAN TAKE CARE OF M4A FILES
+        NSData *jsonNSData = [jsonData dataUsingEncoding:NSUTF8StringEncoding];
+        //id json = [NSJSONSerialization JSONObjectWithData:jsonNSData options:0 error:nil];
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:jsonNSData options:0 error:nil];
+        NSString *jsonText = [json objectForKey:@"text"];
+        NSLog(@"%@",jsonText);
+        //Here we need to call the memo recording to the php page, save the text returned from the php text into the plist or something...then we'll retrieve it in the search function
+        jsonKeyWords = jsonText;*/
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to stop memo audio capture when already stopped.");
+        // Directly call the callback
+        if (completionCallback != nil)
+        {
+            completionCallback(self, NO);
+        }
+    }
+}
+
+- (BOOL)startPhotoCapture
+{
+    // TODO: if video is being captured, stop it first.
+    
+    if (self.isCapturingPhoto == NO)
+    {
+        temporarilyCapturedImage = nil;
+        [self.cameraFrameCaptureHelper startCameraFrameCapture];
+        
+        _isCapturingPhoto = YES;
+
+        return YES;
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to start photo capture when already started.");
+    }
+    
+    return NO;
+}
+
+- (void)stopPhotoCapture // synonymous to snap photo.
+{
+    if (self.isCapturingPhoto == YES)
+    {
+        [self.cameraFrameCaptureHelper stopCameraFrameCapture];
+        _isCapturingPhoto = NO;
+        temporarilyCapturedImage = [self.cameraFrameCaptureHelper currentImage];
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to stop photo capture when already stopped.");
+    }
+}
+
+- (BOOL)startPhodioCapture // same as startAmbientAudioCapture + startPhotoCapture
+{
+    BOOL success = NO;
+    if (self.isCapturingPhodio == NO)
+    {
+        // First try starting the photo capture
+        success = [self startPhotoCapture];
+        if (success)
+        {
+            // If photo capture successfully started, try starting the
+            // ambient audio capture
+            success = [self startAmbientAudioCapture];
+            
+            if (!success)
+            {
+                // If the ambient audio capture failed to start,
+                // stop the photo capture that was already started.
+                [self stopPhotoCapture];
+            }
+        }
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to start phodio capture when already started.");
+    }
+    return success;
+}
+
+- (void)stopPhodioCaptureWithCompletion:(CaptureCompletionCallback)completionCallback
+{
+    if (self.isCapturingPhodio == YES)
+    {
+        [self stopPhotoCapture];
+        
+        // Create a copy of the completion callback
+        CaptureCompletionCallback completionCallbackCopy = [completionCallback copy];
+        
+        [self stopAmbientAudioCaptureWithCompletion:^(ContextCaptureHelper *sender, BOOL success) {
+            if (completionCallbackCopy != nil)
+            {
+                completionCallbackCopy(sender, success);
+            }
+        }];
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to stop phodio capture when already stopped.");
+        // Call the completion callback directly.
+        if (completionCallback != nil)
+        {
+            completionCallback(self, NO);
+        }
+    }
+}
+
+//- (BOOL)startVideoCapture
+//{
+//    // TODO: if ambient audio is being captured, stop it first.
+//    
+//    return YES;
+//}
+//
+//- (void)stopVideoCaptureWithCompletion:(CaptureCompletionCallback)completionCallback
+//{
+//    
+//}
+
+- (void)pauseCapture
+{
+    if (self.isCapturePaused == NO)
+    {
+//        if (self.isCapturingVideo == YES)
+//        {
+//            
+//        }
+//        else
+        {
+            // Pause ambient audio recorder if it is capturing
+            if (self.isCapturingAmbientAudio == YES)
+            {
+                [ambientAudioRecorder pause];
+            }
+
+            // Pause memo audio recorder if it is capturing
+            if (self.isCapturingMemoAudio == YES)
+            {
+                [memoAudioRecorder pause];
+            }
+            
+            // Pause photo capturer if it is capturing
+            if (self.isCapturingPhoto == YES)
+            {
+                [self.cameraFrameCaptureHelper stopCameraFrameCapture];
+            }
+        }
+        
+        _isCapturePaused = YES;
+    }
+}
+
+- (void)resumeCapture
+{
+    if (self.isCapturePaused == YES)
+    {
+//        if (self.isCapturingVideo == YES)
+//        {
+//            
+//        }
+//        else
+        {
+            // Resume ambient audio recorder if it was capturing
+            if (self.isCapturingAmbientAudio == YES)
+            {
+                [ambientAudioRecorder record];
+            }
+
+            // Resume memo audio recorder if it was capturing
+            if (self.isCapturingMemoAudio == YES)
+            {
+                [memoAudioRecorder record];
+            }
+
+            // Resume photo capturer if it was capturing
+            if (self.isCapturingPhoto == YES)
+            {
+                [self.cameraFrameCaptureHelper startCameraFrameCapture];
+            }
+        }
+        
+        _isCapturePaused = NO;
+    }
+}
+
+- (void)discardTemporaryCaptures
+{
+    [self discardTemporaryPhodioCapture];
+    [self discardTemporaryMemoAudioCapture];
+}
+
+- (void)discardTemporaryPhodioCapture
+{
+    [self discardTemporaryAmbientAudioCapture];
+    [self discardTemporaryPhotoCapture];
+}
+
+- (void)discardTemporaryAmbientAudioCapture
+{
+    // Discard ambient audio, if captured
+    if (temporarilyCapturedAmbientAudioFilePath != nil &&
+        [[NSFileManager defaultManager] fileExistsAtPath:temporarilyCapturedAmbientAudioFilePath])
+    {
+        NSError *error = nil;
+        if ([[NSFileManager defaultManager] removeItemAtPath:temporarilyCapturedAmbientAudioFilePath error:&error] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: unable to delete temporary audio file at %@: %@", temporarilyCapturedAmbientAudioFilePath, error.localizedDescription);
+        }
+    }
+    temporarilyCapturedAmbientAudioFilePath = nil;
+}
+
+- (void)discardTemporaryMemoAudioCapture
+{
+    // Discard memo audio, if captured
+    if (temporarilyCapturedMemoAudioFilePath != nil &&
+        [[NSFileManager defaultManager] fileExistsAtPath:temporarilyCapturedMemoAudioFilePath])
+    {
+        NSError *error = nil;
+        if ([[NSFileManager defaultManager] removeItemAtPath:temporarilyCapturedMemoAudioFilePath error:&error] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: unable to delete temporary audio file at %@: %@", temporarilyCapturedMemoAudioFilePath, error.localizedDescription);
+        }
+    }
+    temporarilyCapturedMemoAudioFilePath = nil;
+}
+
+- (void)discardTemporaryPhotoCapture
+{
+    // Discard photo, if captured
+    temporarilyCapturedImage = nil;
+}
+
+//- (void)commitCaptureToCapturedContext:(CapturedContext *)capturedContext withCompletionCallback:(CaptureCommitCompletionCallback)completionCallback
+//{
+//    if (capturedContext != nil &&
+//        (temporarilyCapturedAmbientAudioFilePath != nil ||
+//         temporarilyCapturedMemoAudioFilePath != nil ||
+//         temporarilyCapturedImage != nil))
+//    {
+////        // TODO:
+////        // If capture is still running, stop them.
+//////        if (self.isCapturingVideo == YES)
+//////        {
+//////        
+//////        }
+//////        else
+////        if (self.isCapturingPhoto == YES || self.isCapturingAmbientAudio == YES || self.isCapturingMemoAudio == YES)
+////        {
+////            // Stop the photo capture first, if currently running.
+////            if (self.isCapturingPhoto == YES)
+////            {
+////                [self stopPhotoCapture];
+////            }
+////            // Next stop the ambient and memo audio capture, if both are currently running.
+////            if (self.isCapturingAmbientAudio == YES &&
+////                self.isCapturingMemoAudio == YES)
+////            {
+////                CaptureCommitCompletionCallback completionCallbackCopy = [completionCallback copy];
+////                
+////                // First stop the ambient audio capture
+////                [self stopAmbientAudioCaptureWithCompletion:^(ContextCaptureHelper *sender, BOOL success) {
+////                    // Call commitCaptureToCapturedContext upon completion of ambient audio saving
+////                    CaptureCommitCompletionCallback completionCallbackCopyOfCopy = [completionCallbackCopy copy];
+////                    
+////                    [self stopMemoAudioCaptureWithCompletion:^(ContextCaptureHelper *sender, BOOL success) {
+////                        // Call commitCaptureToCapturedContext upon completion of ambient audio saving
+////                        [sender commitCaptureToCapturedContext:capturedContext withCompletionCallback:completionCallbackCopyOfCopy];
+////                    }];
+////                }];
+////                return;
+////            }
+////            // Next stop the ambient audio capture, if currently running.
+////            if (self.isCapturingAmbientAudio == YES)
+////            {
+////                CaptureCommitCompletionCallback completionCallbackCopy = [completionCallback copy];
+////                
+////                [self stopAmbientAudioCaptureWithCompletion:^(ContextCaptureHelper *sender, BOOL success) {
+////                    // Call commitCaptureToCapturedContext upon completion of ambient audio saving
+////                    [sender commitCaptureToCapturedContext:capturedContext withCompletionCallback:completionCallbackCopy];
+////                }];
+////                return;
+////            }
+////            // Next stop the memo audio capture, if currently running.
+////            if (self.isCapturingMemoAudio == YES)
+////            {
+////                CaptureCommitCompletionCallback completionCallbackCopy = [completionCallback copy];
+////                
+////                [self stopMemoAudioCaptureWithCompletion:^(ContextCaptureHelper *sender, BOOL success) {
+////                    // Call commitCaptureToCapturedContext upon completion of memo audio saving
+////                    [sender commitCaptureToCapturedContext:capturedContext withCompletionCallback:completionCallbackCopy];
+////                }];
+////                return;
+////            }
+////        }
+//
+//        // For each capture that was temporarily captured,
+//        // create the destination path based on tiemstamp
+//        // move over the temp files to destination
+//        
+//        BOOL encounteredError = NO;
+//        encounteredError |= [self commitAmbientAudioCaptureToCapturedContext:capturedContext];
+//        encounteredError |= [self commitMemoAudioCaptureToCapturedContext:capturedContext];
+//        encounteredError |= [self commitPhotoCaptureToCapturedContext:capturedContext];
+//        
+//        if (completionCallback != nil)
+//        {
+//            completionCallback(self, capturedContext, encounteredError == NO);
+//        }
+//    }
+//    else
+//    {
+//        NSLog(@"ERROR: ContextCaptureHelper: attempt to commit capture when there aren't yet any capture.");
+//        if (completionCallback != nil)
+//        {
+//            completionCallback(self, capturedContext, NO);
+//        }
+//    }
+//}
+
+- (BOOL)commitCapturesToCapturedContext:(CapturedContext *)capturedContext
+{
+    BOOL success = YES;
+    
+    if (capturedContext != nil &&
+        (temporarilyCapturedAmbientAudioFilePath != nil ||
+         temporarilyCapturedMemoAudioFilePath != nil ||
+         temporarilyCapturedImage != nil))
+    {
+        success &= [self commitAmbientAudioCaptureToCapturedContext:capturedContext];
+        success &= [self commitMemoAudioCaptureToCapturedContext:capturedContext];
+        success &= [self commitPhotoCaptureToCapturedContext:capturedContext];
+    }
+    else
+    {
+        NSLog(@"ERROR: ContextCaptureHelper: attempt to commit capture when there aren't yet any capture.");
+        success = NO;
+    }
+    return success;
+}
+
+- (BOOL)commitAmbientAudioCaptureToCapturedContext:(CapturedContext *)capturedContext
+{
+    BOOL success = YES;
+
+    if (capturedContext != nil && temporarilyCapturedAmbientAudioFilePath != nil)
+    {
+        NSError *error = nil;
+        
+        //NSString *ambientAudioFilename = [capturedContext timestampedFilenameWithSuffix:nil extension:@"wav"];
+        NSString *ambientAudioFilename = [capturedContext timestampedFilenameWithSuffix:nil extension:@"wav"];
+        NSString *ambientAudioFilePath = [CapturedContext fullPathToDataFile:ambientAudioFilename];
+        if ([[NSFileManager defaultManager] moveItemAtPath:temporarilyCapturedAmbientAudioFilePath toPath:ambientAudioFilePath error:&error] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: unable to move ambient audio file from %@ to %@: %@", temporarilyCapturedAmbientAudioFilePath, ambientAudioFilePath, error.localizedDescription);
+            success = NO;
+        }
+        else
+        {
+            // FIX: first check if there already is a filename assigned,
+            // and if that file exists, delete it?
+            
+            capturedContext.ambientAudioFilename = ambientAudioFilename;
+        }
+        
+        // Clean up temporary captures.
+        [self discardTemporaryAmbientAudioCapture];
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to commit ambient audio capture when there aren't yet any capture.");
+    }
+    
+    return success;
+}
+
+- (BOOL)commitMemoAudioCaptureToCapturedContext:(CapturedContext *)capturedContext
+{
+    BOOL success = YES;
+
+    if (capturedContext != nil && temporarilyCapturedMemoAudioFilePath != nil)
+    {
+        NSError *error = nil;
+        
+        //NSString *memoAudioFilename = [capturedContext timestampedFilenameWithSuffix:@"_memo" extension:@"caf"];
+        NSString *memoAudioFilename = [capturedContext timestampedFilenameWithSuffix:@"_memo" extension:@"wav"];
+        NSString *memoAudioFilePath = [CapturedContext fullPathToDataFile:memoAudioFilename];
+        if ([[NSFileManager defaultManager] moveItemAtPath:temporarilyCapturedMemoAudioFilePath toPath:memoAudioFilePath error:&error] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: unable to move memo audio file from %@ to %@: %@", temporarilyCapturedMemoAudioFilePath, memoAudioFilePath, error.localizedDescription);
+            success = NO;
+        }
+        else
+        {
+            // FIX: first check if there already is a filename assigned,
+            // and if that file exists, delete it?
+            
+            capturedContext.memoAudioFilename = memoAudioFilename;
+            capturedContext.keywords = jsonKeyWords;
+        }
+        
+        // Clean up temporary capture.
+        [self discardTemporaryMemoAudioCapture];
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to commit memo audio capture when there aren't yet any capture.");
+    }
+    
+    return success;
+}
+
+- (BOOL)commitPhotoCaptureToCapturedContext:(CapturedContext *)capturedContext
+{
+    BOOL success = YES;
+
+    if (capturedContext != nil && temporarilyCapturedImage != nil)
+    {
+        NSString *photoFilename = [capturedContext timestampedFilenameWithSuffix:nil extension:@"jpg"];
+        NSString *photoFilePath = [CapturedContext fullPathToDataFile:photoFilename];
+        NSData *imageData = UIImageJPEGRepresentation(temporarilyCapturedImage, 1.0);
+        if ([imageData writeToFile:photoFilePath atomically:YES] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: unable to save captured image to %@", photoFilePath);
+            success = NO;
+        }
+        else
+        {
+            // FIX: first check if there already is a filename assigned,
+            // and if that file exists, delete it?
+            
+            capturedContext.photoFilename = photoFilename;
+        }
+        
+        // Clean up temporary capture.
+        [self discardTemporaryPhotoCapture];
+    }
+    else
+    {
+        NSLog(@"ContextCaptureHelper: attempt to commit photo capture when there aren't yet any capture.");
+    }
+    
+    return success;
+}
+
+-(NSString *)uploadFile:(NSData *)data withPath:(NSURL *)url withFileName:(NSString *)fileName
+{
+    //Now we need to upload the plist to the server
+    
+    NSMutableURLRequest *request = [[NSMutableURLRequest alloc] init];
+    [request setURL:url];
+    [request setHTTPMethod:@"POST"];
+    
+    NSString *boundary = @"---------------------------14737809831466499882746641449";
+    NSString *contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@",boundary];
+    [request addValue:contentType forHTTPHeaderField: @"Content-Type"];
+    
+    NSMutableData *body = [NSMutableData data];
+    [body appendData:[[NSString stringWithFormat:@"\r\n--%@\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[[NSString stringWithString:[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"userfile\"; filename=\"%@\"\r\n", fileName]] dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[@"Content-Type: application/octet-stream\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[NSData dataWithData:data]];
+    [body appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    [request setHTTPBody:body];
+    
+    NSData *returnData = [NSURLConnection sendSynchronousRequest:request returningResponse:nil error:nil];
+    NSString *returnString = [[NSString alloc] initWithData:returnData encoding:NSUTF8StringEncoding];
+    //NSLog(@"Outcome: %@", returnString);
+    return returnString;
+}
+
+#pragma mark - Private instance methods
+
+- (void)signalAmbientAudioRecorderStoppedWithSuccess:(BOOL)success
+{
+    _isCapturingAmbientAudio = NO;
+    ambientAudioRecorder.delegate = nil;
+    ambientAudioRecorder = nil;
+    
+    if (ambientAudioRecordingCompletionCallback != nil)
+    {
+        CaptureCompletionCallback callbackCopy = [ambientAudioRecordingCompletionCallback copy];
+        ambientAudioRecordingCompletionCallback = nil;
+        callbackCopy(self, success);
+    }
+}
+
+- (void)signalMemoAudioRecorderStoppedWithSuccess:(BOOL)success
+{
+    _isCapturingMemoAudio = NO;
+    memoAudioRecorder.delegate = nil;
+    memoAudioRecorder = nil;
+    
+    if (memoAudioRecordingCompletionCallback != nil)
+    {
+        CaptureCompletionCallback callbackCopy = [memoAudioRecordingCompletionCallback copy];
+        memoAudioRecordingCompletionCallback = nil;
+        callbackCopy(self, success);
+    }
+}
+
+#pragma mark - AVAudioRecorderDelegate
+
+- (void)audioRecorderDidFinishRecording:(AVAudioRecorder *)recorder successfully:(BOOL)flag
+{
+    // Move the recorded file over to the temporary saved file.
+    NSError *error = nil;
+    
+    BOOL isAmbientAudioRecording = (recorder == ambientAudioRecorder);
+    
+    NSString *temporarilyCapturedAudioFilePath;
+    if (isAmbientAudioRecording)
+    {
+        temporarilyCapturedAmbientAudioFilePath = [FileUtils pathToTempDataFile:kTempAmbientAudioFilename];
+        temporarilyCapturedAudioFilePath = temporarilyCapturedAmbientAudioFilePath;
+    }
+    else
+    {
+        temporarilyCapturedMemoAudioFilePath = [FileUtils pathToTempDataFile:kTempMemoAudioFilename];
+        temporarilyCapturedAudioFilePath = temporarilyCapturedMemoAudioFilePath;
+    }
+
+    BOOL encounteredError = NO;
+    
+    
+    // First ensure the destination file does not exist.
+    if ([[NSFileManager defaultManager] fileExistsAtPath:temporarilyCapturedAudioFilePath])
+    {
+        // If it does, attempt to delete it.
+        error = nil;
+        if ([[NSFileManager defaultManager] removeItemAtPath:temporarilyCapturedAudioFilePath error:&error] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: unable to delete existing temporarily captured audio file at %@: %@", temporarilyCapturedAudioFilePath, error.localizedDescription);
+
+            encounteredError = YES;
+        }
+    }
+    
+    NSString *sourceFilePath = recorder.url.path;
+
+    if (encounteredError == NO)
+    {
+        error = nil;
+        if ([[NSFileManager defaultManager] moveItemAtPath:sourceFilePath toPath:temporarilyCapturedAudioFilePath error:&error] == NO)
+        {
+            NSLog(@"ERROR: ContextCaptureHelper: unable to move recorded file from %@ to %@: %@", sourceFilePath, temporarilyCapturedAudioFilePath, error.localizedDescription);
+            
+            encounteredError = YES;
+        }
+    }
+    
+    // Attempt to clean up if encountered error.
+    if (encounteredError)
+    {
+        if (isAmbientAudioRecording)
+        {
+            temporarilyCapturedAmbientAudioFilePath = nil;
+        }
+        else
+        {
+            temporarilyCapturedMemoAudioFilePath = nil;
+        }
+
+        // Delete the captured audio file.
+        if ([[NSFileManager defaultManager] fileExistsAtPath:sourceFilePath])
+        {
+            error = nil;
+            if ([[NSFileManager defaultManager] removeItemAtPath:sourceFilePath error:&error] == NO)
+            {
+                NSLog(@"ERROR: ContextCaptureHelper: unable to clean up and remove original captured audio file at %@: %@", sourceFilePath, error.localizedDescription);
+            }
+        }
+
+        // Delete the temporarilyCapturedAudioFile.
+        if ([[NSFileManager defaultManager] fileExistsAtPath:temporarilyCapturedAudioFilePath])
+        {
+            error = nil;
+            if ([[NSFileManager defaultManager] removeItemAtPath:temporarilyCapturedAudioFilePath error:&error] == NO)
+            {
+                NSLog(@"ERROR: ContextCaptureHelper: unable to clean up and remove temporarily captured audio file at %@: %@", temporarilyCapturedAudioFilePath, error.localizedDescription);
+            }
+        }
+    }
+
+    if (isAmbientAudioRecording)
+    {
+        [self signalAmbientAudioRecorderStoppedWithSuccess:(encounteredError == NO)];
+    }
+    else
+    {
+        [self signalMemoAudioRecorderStoppedWithSuccess:(encounteredError == NO)];
+    }
+}
+
+- (void)audioRecorderEncodeErrorDidOccur:(AVAudioRecorder *)recorder error:(NSError *)error
+{
+    NSLog(@"ContextCaptureHelper: audioRecorderEncodeErrorDidOccur:error called");
+
+    BOOL isAmbientAudioRecording = (recorder == ambientAudioRecorder);
+    if (isAmbientAudioRecording)
+    {
+        [self signalAmbientAudioRecorderStoppedWithSuccess:NO];
+    }
+    else
+    {
+        [self signalMemoAudioRecorderStoppedWithSuccess:NO];
+    }
+}
+
+- (void)audioRecorderBeginInterruption:(AVAudioRecorder *)recorder
+{
+    NSLog(@"ContextCaptureHelper: audioRecorderBeginInterruption called");
+}
+
+- (void)audioRecorderEndInterruption:(AVAudioRecorder *)recorder
+{
+    NSLog(@"ContextCaptureHelper: audioRecorderEndInterruption called");
+}
+
+- (void)audioRecorderEndInterruption:(AVAudioRecorder *)recorder withFlags:(NSUInteger)flags
+{
+    NSLog(@"ContextCaptureHelper: audioRecorderEndInterruption:withFlags called");
+}
+
+@end
